@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Paquete source-only: lo consumen api y scraper via tsx, no emite dist.
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "drizzle.config.ts"]
+}

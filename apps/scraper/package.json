@@ -1,0 +1,32 @@
+{
+  "name": "@precios/scraper",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "tsx src/run.ts",
+    "typecheck": "tsc --noEmit",
+    "inspect": "tsx src/inspect.ts",
+    "match": "tsx src/match.ts",
+    "apply": "tsx src/apply.ts",
+    "comparar": "tsx src/comparar.ts",
+    "prune": "tsx src/prune.ts",
+    "snapshot": "tsx src/snapshot.ts",
+    "publicar": "tsx src/publicar.ts",
+    "refrescar": "tsx src/refrescar.ts",
+    "conflictos": "tsx src/conflictos.ts",
+    "promos": "tsx src/promos.ts",
+    "promociones": "tsx src/promociones.ts",
+    "repechaje": "tsx src/repechaje.ts",
+    "respaldar": "tsx src/respaldar.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1131.0",
+    "@precios/db": "*"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}

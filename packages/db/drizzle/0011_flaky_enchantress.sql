@@ -1,0 +1,1 @@
+ALTER TABLE "current_prices" ADD COLUMN "promo_desde" integer;

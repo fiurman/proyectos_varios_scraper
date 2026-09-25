@@ -1,0 +1,1 @@
+ALTER TABLE "product_media" ADD CONSTRAINT "uq_media_url" UNIQUE("product_id","url");

@@ -1,0 +1,36 @@
+{
+  "name": "precios-varios-scraper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Scrapea los supermercados de Bahia Blanca y publica el catalogo que usa la app",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "db:psql": "docker compose exec db psql -U precios -d precios",
+    "scrape": "npm run scrape -w @precios/scraper --",
+    "inspect": "npm run inspect -w @precios/scraper --",
+    "studio": "npm run studio -w @precios/db",
+    "db:reset": "docker compose exec -T db psql -U precios -d precios -c \"TRUNCATE products, categories, stores, prices, current_prices, product_sources, raw_scrape_items, scrape_runs RESTART IDENTITY CASCADE;\"",
+    "match": "npm run match -w @precios/scraper --",
+    "apply": "npm run apply -w @precios/scraper --",
+    "comparar": "npm run comparar -w @precios/scraper --",
+    "prune": "npm run prune -w @precios/scraper --",
+    "api": "npm run dev -w @precios/api",
+    "snapshot": "npm run snapshot -w @precios/scraper --",
+    "publicar": "npm run publicar -w @precios/scraper --",
+    "promociones": "npm run promociones -w @precios/scraper --",
+    "repechaje": "npm run repechaje -w @precios/scraper --",
+    "refrescar": "npm run refrescar -w @precios/scraper",
+    "conflictos": "npm run conflictos -w @precios/scraper --",
+    "respaldar": "npm run respaldar -w @precios/scraper --",
+    "migrate": "npm run migrate -w @precios/db"
+  }
+}

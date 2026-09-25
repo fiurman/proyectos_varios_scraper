@@ -1,0 +1,89 @@
+name: Refrescar catalogo
+
+# Corre solo todos los dias y tambien a mano desde el boton "Run workflow",
+# que sirve desde el celular cuando queres los precios de ahora.
+on:
+  schedule:
+    # En UTC: las 20:00 son las 17:00 en Argentina. GitHub no entiende de
+    # zonas horarias y no ajusta por horario de verano.
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+
+# Si una corrida se solapa con la anterior, se descarta la nueva en vez de
+# correr las dos contra la misma base. Es el equivalente al archivo candado
+# que usa el script cuando corre en una maquina propia.
+concurrency:
+  group: refrescar
+  cancel-in-progress: false
+
+jobs:
+  refrescar:
+    runs-on: ubuntu-latest
+    # El refresco tarda unas dos horas. El tope por defecto son 6, pero se
+    # deja explicito: si algo se cuelga, que muera y no se coma la cuota.
+    timeout-minutes: 180
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_PREFIX: ${{ secrets.R2_PREFIX }}
+      R2_PUBLIC_BASE: ${{ secrets.R2_PUBLIC_BASE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar
+        run: npm ci
+
+      - name: Migraciones
+        run: npm run migrate -w @precios/db
+
+      - name: Refrescar
+        id: refresco
+        run: |
+          set -o pipefail
+          npm run refrescar 2>&1 | tee salida.log
+
+      # Se manda igual haya salido bien o mal: un aviso que no llega no se
+      # distingue de uno que se rompio en silencio.
+      - name: Avisar por Telegram
+        if: always()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -n "$TG_TOKEN" ] || exit 0
+          if [ "${{ steps.refresco.outcome }}" = "success" ]; then
+            ICONO="✅"; TITULO="catalogo actualizado"
+          else
+            ICONO="❌"; TITULO="el refresco fallo"
+          fi
+          # Las lineas de resultado de cada cadena tienen la forma
+          # "[hh:mm:ss] clave: N productos". Se reconocen por la forma y no por
+          # el nombre, asi una cadena nueva aparece sola.
+          RESUMEN="$(grep -E '^\[[0-9:]+\] ([a-z_]+: ([0-9]|FALLO)|Listo|Error)' salida.log | tail -8)"
+          CORRIDA="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # printf y no comillas con saltos adentro: un salto de linea a la
+          # izquierda del todo cierra el bloque y rompe el YAML entero.
+          TEXTO="$(printf '%s precios_varios: %s\n\n%s\n\nVer: %s' "$ICONO" "$TITULO" "$RESUMEN" "$CORRIDA")"
+          curl -sS -m 20 -o /dev/null \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=$TEXTO" \
+            "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
+
+      # Queda guardado por si hay que mirar que paso dias despues.
+      - name: Guardar el log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ github.run_id }}
+          path: salida.log
+          retention-days: 14
