@@ -1,0 +1,55 @@
+name: Probar conexiones
+
+# Una corrida corta para verificar que los secrets estan bien cargados y que
+# se llega a la base y a R2. Antes de esto, la unica forma de enterarse de un
+# secret mal copiado era esperar dos horas a que fallara el refresco entero.
+on:
+  workflow_dispatch:
+
+jobs:
+  probar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_PREFIX: ${{ secrets.R2_PREFIX }}
+      R2_PUBLIC_BASE: ${{ secrets.R2_PUBLIC_BASE }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Que ningun secret quedo vacio
+        run: |
+          for v in DATABASE_URL R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY \
+                   R2_BUCKET R2_PREFIX R2_PUBLIC_BASE; do
+            # Se imprime solo el largo, nunca el valor.
+            [ -n "${!v}" ] && echo "  $v ok (${#v} -> ${#!v} caracteres)" \
+                           || { echo "  $v VACIO"; exit 1; }
+          done
+
+      - name: La base responde y tiene los datos
+        run: |
+          npx tsx -e "
+            import { pool } from '@precios/db';
+            const { rows } = await pool.query(
+              'select (select count(*) from products) productos,' +
+              ' (select count(*) from current_prices) precios,' +
+              ' (select count(*) from product_matches) matches'
+            );
+            console.log('  ', JSON.stringify(rows[0]));
+            await pool.end();
+          "
+
+      - name: Se puede escribir en R2
+        run: npm run scrape -- coope 5 && npm run snapshot && npm run publicar
