@@ -63,6 +63,13 @@ jobs:
       - name: Migraciones
         run: npm run migrate -w @precios/db
 
+      # Barato y sin efecto cuando ya estan bien. Sirve la vez que la base se
+      # restaura de un respaldo: ahi los contadores quedan en cero y el primer
+      # insert choca contra lo restaurado, a mitad del scrapeo y con un error
+      # que no dice que el problema son las secuencias.
+      - name: Reponer contadores de id
+        run: npm run secuencias
+
       - name: Refrescar
         id: refresco
         run: |
