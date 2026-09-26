@@ -33,6 +33,23 @@ jobs:
       R2_PUBLIC_BASE: ${{ secrets.R2_PUBLIC_BASE }}
 
     steps:
+      # Primero de todo, antes incluso de bajar el codigo: es la unica señal de
+      # que la tarea se disparo. Sin esto, dos horas de silencio son iguales a
+      # que el cron no haya corrido, y de eso uno se entera al dia siguiente.
+      - name: Avisar que arranco
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -n "$TG_TOKEN" ] || exit 0
+          CORRIDA="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXTO="$(printf '🛒 precios_varios: arranco el refresco (%s). Suele tardar unas 2 horas.\n\nVer: %s' \
+                    "$(TZ=America/Argentina/Buenos_Aires date '+%H:%M')" "$CORRIDA")"
+          curl -sS -m 20 -o /dev/null \
+            -d "chat_id=$TG_CHAT" \
+            --data-urlencode "text=$TEXTO" \
+            "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
