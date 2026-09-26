@@ -31,12 +31,23 @@ jobs:
 
       - name: Que ningun secret quedo vacio
         run: |
+          falta=0
           for v in DATABASE_URL R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY \
                    R2_BUCKET R2_PREFIX R2_PUBLIC_BASE; do
-            # Se imprime solo el largo, nunca el valor.
-            [ -n "${!v}" ] && echo "  $v ok (${#v} -> ${#!v} caracteres)" \
-                           || { echo "  $v VACIO"; exit 1; }
+            # A una variable intermedia: bash no deja pedir el largo y la
+            # referencia indirecta en la misma expansion.
+            valor="${!v}"
+            if [ -n "$valor" ]; then
+              # Solo el largo, nunca el valor.
+              echo "  $v ok (${#valor} caracteres)"
+            else
+              echo "  $v VACIO"
+              falta=1
+            fi
           done
+          # Se recorren todos antes de cortar: si hay tres mal cargados,
+          # conviene enterarse de los tres de una y no de a uno por corrida.
+          [ "$falta" -eq 0 ] || exit 1
 
       - name: La base responde y tiene los datos
         run: |
