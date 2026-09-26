@@ -50,17 +50,7 @@ jobs:
           [ "$falta" -eq 0 ] || exit 1
 
       - name: La base responde y tiene los datos
-        run: |
-          npx tsx -e "
-            import { pool } from '@precios/db';
-            const { rows } = await pool.query(
-              'select (select count(*) from products) productos,' +
-              ' (select count(*) from current_prices) precios,' +
-              ' (select count(*) from product_matches) matches'
-            );
-            console.log('  ', JSON.stringify(rows[0]));
-            await pool.end();
-          "
+        run: npm run comprobar
 
       - name: Se puede escribir en R2
         run: npm run scrape -- coope 5 && npm run snapshot && npm run publicar

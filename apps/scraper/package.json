@@ -18,7 +18,8 @@
     "promos": "tsx src/promos.ts",
     "promociones": "tsx src/promociones.ts",
     "repechaje": "tsx src/repechaje.ts",
-    "respaldar": "tsx src/respaldar.ts"
+    "respaldar": "tsx src/respaldar.ts",
+    "comprobar": "tsx src/comprobar.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

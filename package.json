@@ -31,6 +31,7 @@
     "refrescar": "npm run refrescar -w @precios/scraper",
     "conflictos": "npm run conflictos -w @precios/scraper --",
     "respaldar": "npm run respaldar -w @precios/scraper --",
-    "migrate": "npm run migrate -w @precios/db"
+    "migrate": "npm run migrate -w @precios/db",
+    "comprobar": "npm run comprobar -w @precios/scraper --"
   }
 }
