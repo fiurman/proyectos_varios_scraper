@@ -23,8 +23,32 @@ jobs:
     # deja explicito: si algo se cuelga, que muera y no se coma la cuota.
     timeout-minutes: 180
 
+    # Postgres corriendo al lado, en el mismo runner.
+    #
+    # La primera version usaba una base en la nube y la corrida se fue a 3
+    # horas: `persist.ts` hace unas veinte consultas por producto y cada una
+    # cruzaba el continente. Solo La Coope tardo 2h29 contra los 17 minutos que
+    # tarda contra una base local. El scrapeo nunca fue el problema.
+    #
+    # El estado no se pierde: se restaura de un respaldo en R2 al empezar y se
+    # vuelve a subir al terminar.
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: precios
+          POSTGRES_PASSWORD: precios
+          POSTGRES_DB: precios
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U precios"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL: postgres://precios:precios@localhost:5432/precios
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -59,6 +83,20 @@ jobs:
 
       - name: Instalar
         run: npm ci
+
+      - name: Traer el estado anterior
+        run: |
+          sudo apt-get install -y -qq postgresql-client
+          npm run --silent respaldos -- bajar estado.dump || true
+          if [ ! -s estado.dump ]; then
+            echo "  Sin respaldo previo: se arranca de una base vacia."
+            exit 0
+          fi
+          # El dump trae el esquema, asi que entra en una base recien creada.
+          # Los avisos de "no existe" son normales con --clean sobre vacio.
+          pg_restore -d "$DATABASE_URL" --no-owner --clean --if-exists estado.dump 2>&1 \
+            | grep -viE "does not exist|already exists" | head -5 || true
+          psql "$DATABASE_URL" -tAc "select 'restaurado: ' || count(*) || ' productos' from products"
 
       - name: Migraciones
         run: npm run migrate -w @precios/db
@@ -102,6 +140,12 @@ jobs:
             -d "chat_id=$TG_CHAT" \
             --data-urlencode "text=$TEXTO" \
             "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
+
+      # Solo si el refresco salio bien: un estado a medias es peor que el
+      # anterior entero.
+      - name: Guardar el estado
+        if: steps.refresco.outcome == 'success'
+        run: npm run respaldar
 
       # Queda guardado por si hay que mirar que paso dias despues.
       - name: Guardar el log

@@ -20,7 +20,8 @@
     "repechaje": "tsx src/repechaje.ts",
     "respaldar": "tsx src/respaldar.ts",
     "comprobar": "tsx src/comprobar.ts",
-    "secuencias": "tsx src/secuencias.ts"
+    "secuencias": "tsx src/secuencias.ts",
+    "respaldos": "tsx src/respaldar.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

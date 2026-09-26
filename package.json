@@ -33,6 +33,7 @@
     "respaldar": "npm run respaldar -w @precios/scraper --",
     "migrate": "npm run migrate -w @precios/db",
     "comprobar": "npm run comprobar -w @precios/scraper --",
-    "secuencias": "npm run secuencias -w @precios/scraper --"
+    "secuencias": "npm run secuencias -w @precios/scraper --",
+    "respaldos": "npm run respaldos -w @precios/scraper --"
   }
 }

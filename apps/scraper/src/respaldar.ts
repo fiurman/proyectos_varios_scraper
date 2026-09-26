@@ -4,7 +4,10 @@ import { createReadStream } from 'node:fs';
 import { stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 
 /** Copia la base a R2, al lado del snapshot.
  *
@@ -46,6 +49,8 @@ function volcar(destino: string): Promise<void> {
     const hijo = spawn('pg_dump', [
       process.env.DATABASE_URL!,
       '--exclude-table-data=raw_scrape_items',
+      // Con esquema: el respaldo tiene que poder restaurarse sobre una base
+      // recien creada, que es lo que hay en cada corrida de la tarea.
       '-Fc', '-f', destino,
     ], { stdio: ['ignore', 'inherit', 'inherit'] });
     hijo.on('error', reject);
@@ -56,11 +61,61 @@ function volcar(destino: string): Promise<void> {
   });
 }
 
+/** Nombre del respaldo mas nuevo que hay en R2, o vacio si no hay ninguno.
+ *
+ *  Lo usa la tarea programada para saber que bajar antes de empezar.
+ *  Se imprime pelado, sin adornos, porque lo lee un script. */
+async function ultimo(s3: S3Client): Promise<string> {
+  const { Contents } = await s3.send(new ListObjectsV2Command({
+    Bucket: cfg.bucket,
+    Prefix: `${cfg.prefijo}/respaldos/`,
+  }));
+  const nombres = (Contents ?? [])
+    .map((o) => o.Key ?? '')
+    .filter((k) => k.endsWith('.dump'))
+    .sort();
+  const ultimo = nombres.at(-1);
+  return ultimo ? ultimo.split('/').pop()! : '';
+}
+
 async function main(): Promise<void> {
   const falta = faltante();
   if (falta) {
     console.error(`Falta ${falta} en el .env. Sin eso no hay adonde subir.`);
     process.exitCode = 1;
+    return;
+  }
+
+  const s3Listar = new S3Client({
+    region: 'auto',
+    endpoint: `https://${cfg.cuenta}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId: cfg.clave!, secretAccessKey: cfg.secreto! },
+  });
+
+  const orden = process.argv[2] ?? '';
+
+  // `respaldos ultimo` solo informa cual es el mas nuevo y termina.
+  if (orden === 'ultimo') {
+    console.log(await ultimo(s3Listar));
+    return;
+  }
+
+  // `respaldos bajar <destino>` trae el mas nuevo.
+  //
+  // Con credenciales y no por la URL publica: el respaldo no tiene por que
+  // estar al alcance de cualquiera que adivine el link, aunque su contenido
+  // sea el mismo catalogo que se publica.
+  if (orden === 'bajar') {
+    const nombre = await ultimo(s3Listar);
+    if (!nombre) { console.error('No hay ningun respaldo todavia.'); return; }
+    const destino = process.argv[3] ?? nombre;
+    const { Body } = await s3Listar.send(new GetObjectCommand({
+      Bucket: cfg.bucket,
+      Key: `${cfg.prefijo}/respaldos/${nombre}`,
+    }));
+    await pipeline(Body as Readable, createWriteStream(destino));
+    const { size } = await stat(destino);
+    console.log(`  ${nombre} -> ${destino}  ${(size / 1024 / 1024).toFixed(0)} MB`);
     return;
   }
 
