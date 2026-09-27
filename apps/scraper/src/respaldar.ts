@@ -108,7 +108,17 @@ async function main(): Promise<void> {
   if (orden === 'bajar') {
     const nombre = await ultimo(s3Listar);
     if (!nombre) { console.error('No hay ningun respaldo todavia.'); return; }
-    const destino = process.argv[3] ?? nombre;
+    // Relativo a donde se invoco npm, no a donde termino corriendo.
+    //
+    // `npm run -w @precios/scraper` cambia el directorio al del workspace, asi
+    // que un nombre suelto escribia en apps/scraper/ y quien lo llamo lo
+    // buscaba en la raiz. Paso de verdad: la tarea bajo el respaldo, no lo
+    // encontro, arranco de una base vacia y recreo el catalogo entero con ids
+    // nuevos, dejando sin efecto lo que la app tenia guardado.
+    const pedido = process.argv[3] ?? nombre;
+    const destino = path.isAbsolute(pedido)
+      ? pedido
+      : path.resolve(process.env.INIT_CWD ?? process.cwd(), pedido);
     const { Body } = await s3Listar.send(new GetObjectCommand({
       Bucket: cfg.bucket,
       Key: `${cfg.prefijo}/respaldos/${nombre}`,
@@ -119,8 +129,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const fecha = new Date().toISOString().slice(0, 10);
-  const nombre = `base-${fecha}.dump`;
+  // Con hora y no solo fecha: dos respaldos del mismo dia se pisaban, y el
+  // orden alfabetico es lo que decide cual es el ultimo.
+  const sello = new Date().toISOString().slice(0, 16).replace(':', '-');
+  const nombre = `base-${sello}.dump`;
   const local = path.join(tmpdir(), nombre);
 
   console.log('Volcando la base...');
