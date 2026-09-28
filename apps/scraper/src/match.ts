@@ -131,26 +131,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // Dos productos distintos no pueden ser el mismo del otro lado: cuando varios
-  // reclaman el mismo par, solo el de mejor score queda en auto. Es lo que
-  // separa "raid" de "raid max", que comparten todo menos una palabra.
-  const mejorPorDestino = new Map<string, number>();
-  for (const m of aGuardar) {
-    if (m.status !== 'auto') continue;
-    const actual = mejorPorDestino.get(m.matchProductId);
-    const score = Number(m.score);
-    if (actual === undefined || score > actual) mejorPorDestino.set(m.matchProductId, score);
-  }
-
-  let degradados = 0;
-  for (const m of aGuardar) {
-    if (m.status !== 'auto') continue;
-    if (Number(m.score) < mejorPorDestino.get(m.matchProductId)!) {
-      m.status = 'pendiente';
-      degradados++;
-    }
-  }
-
   // Recalcular no debe pisar lo que una persona ya decidio.
   for (let i = 0; i < aGuardar.length; i += 500) {
     await db.insert(productMatches).values(aGuardar.slice(i, i + 500))
@@ -167,13 +147,73 @@ async function main(): Promise<void> {
       });
   }
 
+  const soltados = await unDuenoPorCanonico();
+
   const auto = aGuardar.filter((m) => m.status === 'auto').length;
   console.log(`  auto (score alto):  ${auto}`);
   console.log(`  pendientes:         ${aGuardar.length - auto}`);
   console.log(`  sin marca del otro lado: ${sinMarcaEnLaOtra}`);
   console.log(`  sin candidato bueno:     ${descartados}`);
-  console.log(`  degradados por conflicto: ${degradados}`);
+  console.log(`  soltados por disputa:    ${soltados}`);
   console.log(`\nGuardados ${aGuardar.length} pares en product_matches.`);
+}
+
+/** Un canonico tiene un solo dueño.
+ *
+ *  Dos productos distintos no pueden ser el mismo del otro lado, asi que cuando
+ *  varios reclaman el mismo canonico queda en `auto` solo el de mejor score. Es
+ *  lo que separa "raid" de "raid max", que comparten todo menos una palabra.
+ *
+ *  Y si empatan en el mejor score, no queda ninguno. Esto faltaba y era el
+ *  agujero grande. `contencion` divide por el conjunto mas chico, asi que un
+ *  canonico de dos palabras da 1.0 contra cualquier producto de esa marca:
+ *  "Esponja Virulana" empataba a 1.000 con las diez esponjas Virulana del
+ *  catalogo y entraban las diez. Un canonico de Rexona se llevaba veinte
+ *  desodorantes de variantes distintas. Medido sobre la base: 882 filas
+ *  empatadas, 878 de ellas productos realmente distintos.
+ *
+ *  Desempatar por parecido de texto no sirve, ya se probo: contra un canonico
+ *  que dice "charcoal", "white" puntua mas alto que "white carbon", que es el
+ *  correcto. Si no hay con que decidir, que no decida.
+ *
+ *  Corre sobre la tabla entera y no sobre lo de esta corrida. Arreglarlo solo
+ *  en memoria dejaba 490 filas empatadas igual: un par que entro como `auto`
+ *  en una corrida vieja y hoy ya no se regenera no se volvia a mirar nunca, y
+ *  los empates se acumulaban corrida a corrida.
+ *
+ *  Degrada a pendiente en vez de borrar: el par sigue ahi para que una persona
+ *  lo decida. Tambien limpia `applied_at`, sin lo cual el producto seguia
+ *  apuntando al canonico equivocado: `apply` solo suelta el puntero cuando ya
+ *  no queda ningun match aplicado, y un match degradado que conserva la fecha
+ *  cuenta como aplicado.
+ *
+ *  Y si ya hay un `confirmado` para ese canonico, los `auto` que lo disputan se
+ *  caen: la decision ya la tomo una persona. */
+async function unDuenoPorCanonico(): Promise<number> {
+  const { rowCount } = await pool.query(`
+    with mejor as (
+      select match_product_id, max(score) score
+        from product_matches where status = 'auto' group by 1
+    ),
+    empates as (
+      select m.match_product_id, count(*) cuantos
+        from product_matches m
+        join mejor t on t.match_product_id = m.match_product_id and m.score = t.score
+       where m.status = 'auto'
+       group by 1
+    ),
+    decidido as (
+      select distinct match_product_id from product_matches where status = 'confirmado'
+    )
+    update product_matches m
+       set status = 'pendiente', applied_at = null, updated_at = now()
+      from mejor t
+      join empates e on e.match_product_id = t.match_product_id
+      left join decidido d on d.match_product_id = t.match_product_id
+     where m.match_product_id = t.match_product_id
+       and m.status = 'auto'
+       and (m.score < t.score or e.cuantos > 1 or d.match_product_id is not null)`);
+  return rowCount ?? 0;
 }
 
 try {
