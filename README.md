@@ -49,6 +49,20 @@ Corre solo todos los días por GitHub Actions y también a mano desde el botón
 `scripts/refrescar.sh` es la variante para correrlo en una máquina propia: usa
 un archivo candado, avisa por Telegram y deja logs.
 
+### Los respaldos
+
+Cuando el refresco termina bien, sube la base a R2 con `npm run respaldar`. Se
+conservan los **últimos 4** y el más viejo se borra solo en cada corrida, así
+que la carpeta no crece: son unos 36 MB cada uno, 140 MB en total, contra los
+10 GB del plan gratis.
+
+Desde el panel de R2 parece que crece, porque se ve aparecer el archivo nuevo y
+no se ve desaparecer el viejo. La línea `borrados N respaldos viejos` en el log
+de la corrida es la que lo confirma.
+
+Se guardan cuatro y no uno porque si el último se subió con la base ya rota,
+hace falta tener a dónde volver.
+
 ## Lo que hay que saber antes de tocar precios
 
 Tres cosas que costaron plata averiguar, todas verificadas contra tickets
