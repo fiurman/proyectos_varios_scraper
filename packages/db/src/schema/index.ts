@@ -8,3 +8,4 @@ export * from './sources.js';
 export * from './matches.js';
 export * from './conflictos.js';
 export * from './promos.js';
+export * from './estado.js';

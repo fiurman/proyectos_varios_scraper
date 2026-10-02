@@ -1,5 +1,7 @@
 import '@precios/db/env';
-import { pool, db, currentPrices, productSources, stores } from '@precios/db';
+import {
+  pool, db, currentPrices, estadoScraper, productSources, stores,
+} from '@precios/db';
 import { and, eq, sql } from 'drizzle-orm';
 import { traer } from './traer.js';
 
@@ -27,13 +29,44 @@ const CADENA = 'cooperativa_obrera';
 const DELAY_MS = 800;
 const PAGE_SIZE = 200;
 
-/** Desde donde barrer y cuanto mirar mas alla del ultimo id vivo.
+/** Desde donde barrer.
  *
- *  Se barre una ventana en vez de guardar solo el mayor e ir sumando: si un dia
- *  no corremos, o si los ids saltan para atras, un puntero que solo avanza deja
- *  de ver las campañas nuevas y no se entera nunca. */
-const SEMILLA = 82844;
-const MARGEN = 30;
+ *  Antes esto era `SEMILLA = 82844` y `MARGEN = 30`, o sea una ventana fija de
+ *  36 ids escrita a mano. Se rompio solo: los ids de campaña avanzan con el
+ *  tiempo y la ventana se queda donde estaba. Medido el 2026-10-02, las
+ *  campañas vivas estaban entre 83090 y 83345 —216 ids mas alla del final de la
+ *  ventana— y el barrido no encontraba nada.
+ *
+ *  Ahora la ventana arranca en el ultimo id vivo que guardamos y camina para
+ *  adelante hasta encontrar un hueco largo. Se corre sola con las campañas. */
+
+/** Solo para la primera corrida, cuando no hay nada guardado todavia. */
+const SEMILLA_INICIAL = 82844;
+const CLAVE_ESTADO = 'promo_ids_coope';
+
+/** Cuanto mirar para atras del id vivo mas chico que conocemos. Las campañas
+ *  pueden aparecer abajo de la ultima que vimos. */
+const MARGEN_ATRAS = 60;
+
+/** Cuantos ids seguidos sin nada hacen falta para dar por terminada la busqueda.
+ *
+ *  Medido el 2026-10-02: las campañas vivas estaban en 83090, 83166, 83256,
+ *  83296, 83325, 83334 y 83345. El hueco mas grande entre dos vivas fue de 90
+ *  ids, y desde la semilla vieja hasta la primera viva habia 246. Con 400 se
+ *  recupera incluso de una ventana vieja de varias semanas sin partir al medio
+ *  un grupo de campañas. */
+const HUECO_PARA_CORTAR = 400;
+
+/** Tope duro de ids por corrida. Sin esto, una API que empieza a devolver 0
+ *  para todo haria un barrido infinito. */
+const MAX_IDS_POR_CORRIDA = 1500;
+
+/** Cuantas consultas de sondeo en paralelo.
+ *
+ *  Solo para el sondeo, que es una consulta por id que no trae articulos. El
+ *  recorrido de cada campaña sigue siendo de a una con su pausa. Cuatro medido
+ *  contra la API el 2026-10-02: 860 ids sin un solo error de red. */
+const SONDEOS_EN_PARALELO = 4;
 
 /** Criterios de orden del listado.
  *
@@ -90,30 +123,114 @@ const aCentavos = (v: string | number | null): number | null => {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
 };
 
+/** Los ids vivos de la ultima corrida, o la semilla si es la primera vez. */
+async function idsConocidos(): Promise<number[]> {
+  try {
+    const [fila] = await db.select({ valor: estadoScraper.valor })
+      .from(estadoScraper)
+      .where(eq(estadoScraper.clave, CLAVE_ESTADO));
+    const v = fila?.valor as { vivos?: unknown } | undefined;
+    const vivos = Array.isArray(v?.vivos)
+      ? v!.vivos.filter((x): x is number => typeof x === 'number' && Number.isInteger(x))
+      : [];
+    return vivos.length > 0 ? vivos : [SEMILLA_INICIAL];
+  } catch {
+    // Si la tabla todavia no existe (migracion sin aplicar), se arranca de la
+    // semilla en vez de fallar. Es memoria, no un dato imprescindible.
+    return [SEMILLA_INICIAL];
+  }
+}
+
+async function guardarIdsVivos(vivos: number[]): Promise<void> {
+  const valor = { vivos, visto: new Date().toISOString() };
+  await db.insert(estadoScraper)
+    .values({ clave: CLAVE_ESTADO, valor })
+    .onConflictDoUpdate({
+      target: estadoScraper.clave,
+      set: { valor, actualizadoEn: new Date() },
+    });
+}
+
+/** Sondea un id: devuelve cuantos articulos declara, o 0 si no existe. */
+async function sondear(id: number): Promise<number> {
+  try {
+    const { total } = await pedir(id, 0, 1);
+    return total;
+  } catch {
+    // Un id que no responde no es un error: la mayoria no existe.
+    return 0;
+  }
+}
+
+/** Busca las campañas vivas caminando para adelante.
+ *
+ *  Arranca un poco antes del id vivo mas chico que conocemos y avanza. Cada vez
+ *  que encuentra una viva, extiende el horizonte: asi un grupo de campañas
+ *  desparramado no se corta a la mitad. Se detiene cuando pasa `HUECO_PARA_CORTAR`
+ *  ids sin encontrar nada, o al llegar al tope duro. */
+async function buscarCampanas(): Promise<{ id: number; total: number }[]> {
+  const conocidos = await idsConocidos();
+  const desde = Math.min(...conocidos) - MARGEN_ATRAS;
+
+  const vivas: { id: number; total: number }[] = [];
+  let horizonte = Math.max(...conocidos) + HUECO_PARA_CORTAR;
+  let probados = 0;
+  let id = desde;
+
+  while (id <= horizonte && probados < MAX_IDS_POR_CORRIDA) {
+    // De a tandas en paralelo: son consultas que no traen articulos, y de a una
+    // con la pausa de siempre un barrido de mil ids tarda trece minutos.
+    const tanda: number[] = [];
+    for (let i = 0; i < SONDEOS_EN_PARALELO && id <= horizonte && probados < MAX_IDS_POR_CORRIDA; i++) {
+      tanda.push(id);
+      id++;
+      probados++;
+    }
+
+    const totales = await Promise.all(tanda.map(sondear));
+    for (let i = 0; i < tanda.length; i++) {
+      const total = totales[i]!;
+      if (total > 0) {
+        const vivo = tanda[i]!;
+        vivas.push({ id: vivo, total });
+        // Encontramos una: vale la pena mirar mas alla.
+        horizonte = Math.max(horizonte, vivo + HUECO_PARA_CORTAR);
+      }
+    }
+    await sleep(DELAY_MS);
+  }
+
+  const hasta = Math.min(id - 1, horizonte);
+  console.log(`Sondeados ${probados} ids (${desde} a ${hasta}).`);
+  if (probados >= MAX_IDS_POR_CORRIDA) {
+    console.warn(`  ! se corto por el tope de ${MAX_IDS_POR_CORRIDA} ids.`);
+  }
+  return vivas.sort((a, b) => b.total - a.total);
+}
+
 async function main(): Promise<void> {
   const soloVer = (process.argv[2] ?? '') === 'ver';
 
   const [tienda] = await db.select({ id: stores.id }).from(stores).where(eq(stores.chain, CADENA));
   if (!tienda) throw new Error(`No existe la tienda ${CADENA}`);
 
-  // Barrido: se prueba cada id con una sola consulta que solo cuenta.
-  const vivas: { id: number; total: number }[] = [];
-  for (let id = SEMILLA - 5; id <= SEMILLA + MARGEN; id++) {
-    try {
-      const { total } = await pedir(id, 0, 1);
-      if (total > 0) vivas.push({ id, total });
-    } catch {
-      // Un id que no responde no es un error: la mayoria no existe.
-    }
-    await sleep(DELAY_MS);
-  }
+  const vivas = await buscarCampanas();
 
   if (vivas.length === 0) {
-    console.error('No encontre ninguna campaña viva. ¿Cambio el rango de ids?');
-    process.exitCode = 1;
+    // Esto NO es un error. Que no haya ninguna campaña es un estado legitimo:
+    // las campañas se terminan y puede no haber ninguna hoy. Antes esto hacia
+    // `process.exitCode = 1`, y como el refresco trataba la falla como fatal, se
+    // perdia la noche entera de scrapeo por no haber promociones que etiquetar.
+    console.warn(
+      'Ninguna campaña viva en el rango barrido. No es un error: puede no haber' +
+      ' ninguna hoy. Si se repite varios dias, correr `npm run promociones -- ver`' +
+      ' para ver el rango que se probo.',
+    );
     return;
   }
   console.log(`${vivas.length} campañas vivas: ${vivas.map((v) => `${v.id} (${v.total})`).join(', ')}\n`);
+
+  if (!soloVer) await guardarIdsVivos(vivas.map((v) => v.id));
 
   let vistos = 0;
   let actualizados = 0;

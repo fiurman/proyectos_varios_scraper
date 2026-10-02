@@ -141,8 +141,14 @@ jobs:
             --data-urlencode "text=$TEXTO" \
             "https://api.telegram.org/bot$TG_TOKEN/sendMessage"
 
-      # Solo si el refresco salio bien: un estado a medias es peor que el
-      # anterior entero.
+      # El segundo respaldo del dia. El primero lo hace `refrescar` apenas
+      # termina el scrapeo, que es lo caro; este agrega el enriquecimiento
+      # (promociones, repechaje, matches) y pisa al anterior.
+      #
+      # Sigue condicionado a que el refresco salga bien, pero ahora eso ya no
+      # arriesga la noche: si algo falla despues del scrapeo, el respaldo de
+      # adentro de `refrescar` ya esta subido. Un estado a medias sigue siendo
+      # peor que el anterior entero, y por eso no se pone `always()`.
       - name: Guardar el estado
         if: steps.refresco.outcome == 'success'
         run: npm run respaldar
