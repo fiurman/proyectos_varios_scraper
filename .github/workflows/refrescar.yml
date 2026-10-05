@@ -4,8 +4,20 @@ name: Refrescar catalogo
 # que sirve desde el celular cuando queres los precios de ahora.
 on:
   schedule:
-    # En UTC: las 20:00 son las 17:00 en Argentina. GitHub no entiende de
-    # zonas horarias y no ajusta por horario de verano.
+    # En UTC: GitHub no entiende de zonas horarias y no ajusta por horario de
+    # verano. Argentina es UTC-3.
+    #
+    # Dos veces por dia, porque las promos cambian de un dia para el otro y con
+    # una sola corrida a la noche, a la mañana el changuito todavia mostraba las
+    # del dia anterior.
+    #
+    # - 08:23 UTC, las 05:23 en Argentina: la corrida tarda casi dos horas, asi
+    #   que arranca temprano para que a las 8 los precios ya esten. El minuto
+    #   impar es a proposito: GitHub atrasa mas las corridas en punto, que es
+    #   cuando arranca la mayoria de los crons del mundo.
+    # - 20:00 UTC, las 17:00: la de siempre. En la practica GitHub la viene
+    #   arrancando entre las 19:45 y las 21, por la cola.
+    - cron: '23 8 * * *'
     - cron: '0 20 * * *'
   workflow_dispatch:
 
