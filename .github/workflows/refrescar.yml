@@ -98,8 +98,19 @@ jobs:
 
       - name: Traer el estado anterior
         run: |
-          sudo apt-get install -y -qq postgresql-client
-          npm run --silent respaldos -- bajar estado.dump || true
+          # Con reintentos: el 11/11 el runner no pudo resolver
+          # security.ubuntu.com por un momento y se perdio la corrida entera.
+          for i in 1 2 3; do
+            sudo apt-get install -y -qq postgresql-client && break
+            [ "$i" = 3 ] && exit 1
+            echo "  apt fallo, reintento en 30 s"; sleep 30
+            sudo apt-get update -qq || true
+          done
+          # Sin `|| true`: si no hay respaldo, `bajar` sale bien y sin archivo,
+          # y se arranca de cero, que es lo correcto. Si falla la red contra R2,
+          # tiene que cortar aca: arrancar de una base vacia recrea el catalogo
+          # con ids nuevos y despues lo sube como el respaldo bueno.
+          npm run --silent respaldos -- bajar estado.dump
           if [ ! -s estado.dump ]; then
             echo "  Sin respaldo previo: se arranca de una base vacia."
             exit 0
